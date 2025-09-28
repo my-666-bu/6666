@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>设备详情</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Noto Sans',sans-serif;background:#f5f7fb;margin:0}
+        .topbar{background:#1976d2;color:#fff;padding:12px 16px}
+        .container{max-width:1200px;margin:16px auto;padding:0 16px}
+        .card{background:#fff;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.06);padding:16px;margin-bottom:16px}
+        label{display:block;margin:8px 0 4px}
+        input,select{width:100%;padding:10px;border:1px solid #ddd;border-radius:6px}
+        .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+        button{background:#3f8efc;color:#fff;border:none;padding:10px 12px;border-radius:6px;cursor:pointer}
+        table{width:100%;border-collapse:collapse}
+        th,td{padding:10px;border-bottom:1px solid #eee;text-align:left}
+        a.btn{background:#888;color:#fff;text-decoration:none;padding:6px 10px;border-radius:6px}
+    </style>
+</head>
+<body>
+    <div class="topbar"><a class="btn" href="/devices">返回</a> 设备详情</div>
+    <div class="container">
+        <div class="card">
+            <h3 style="margin-top:0">已添加设备</h3>
+            <table>
+                <thead>
+                    <tr><th>名称</th><th>操作</th></tr>
+                </thead>
+                <tbody>
+                    {% for d in devices %}
+                    <tr>
+                        <td>{{ d.name }}</td>
+                        <td><a class="btn" href="/sensor/{{ d.id }}" style="background:#3f8efc;color:#fff;text-decoration:none;padding:4px 8px;border-radius:6px">查看实时</a></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="grid">
+            <div class="card">
+                <h3 style="margin-top:0">添加传感器</h3>
+                <button id="toggleAddSensor" type="button" style="margin-bottom:12px">点击添加传感器</button>
+                <form id="addSensorForm" method="post" action="/device/{{ device.id }}/add_sensor" style="display:none">
+                    <label>名称</label>
+                    <input name="name" placeholder="例如 温度传感器" required>
+                    <label>是否NLE设备</label>
+                    <select name="is_nle_device">
+                        <option value="">否</option>
+                        <option value="1">是</option>
+                    </select>
+                    <label>NLE 设备ID</label>
+                    <input name="nle_device_id" placeholder="不填则使用全局ID">
+                    <label>NLE 传感Key</label>
+                    <input name="nle_sensor_key" placeholder="例如 {{ 'wddhy' }} 或 {{ 'sddhy' }}">
+                    <div style="margin-top:12px"><button type="submit">添加传感器</button></div>
+                </form>
+            </div>
+
+            <div class="card">
+                <h3 style="margin-top:0">添加控制器</h3>
+                <button id="toggleAddController" type="button" style="margin-bottom:12px">点击添加控制器</button>
+                <form id="addControllerForm" method="post" action="/device/{{ device.id }}/add_controller" style="display:none">
+                    <label>名称</label>
+                    <input name="name" placeholder="例如 风扇控制" required>
+                    <label>控制模式</label>
+                    <select name="control_mode">
+                        <option value="nle">NLE</option>
+                        <option value="http">HTTP</option>
+                    </select>
+                    <label>控制Key（或识别）</label>
+                    <input name="controller_key" placeholder="如 fan 或开关识别">
+                    <label>HTTP 控制地址（若选 HTTP）</label>
+                    <input name="control_http_url" placeholder="http://..."></input>
+                    <label>NLE 设备ID（若选 NLE）</label>
+                    <input name="nle_device_id" placeholder="可留空用预设">
+                    <label>NLE 控制Key（若选 NLE）</label>
+                    <input name="nle_control_key" placeholder="云端控制点键名">
+                    <div style="margin-top:12px"><button type="submit">添加控制器</button></div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <script>
+        (function(){
+            var sBtn = document.getElementById('toggleAddSensor');
+            var sForm = document.getElementById('addSensorForm');
+            if (sBtn && sForm){ sBtn.addEventListener('click', function(){ sForm.style.display = (sForm.style.display==='none'||!sForm.style.display)?'block':'none'; }); }
+
+            var cBtn = document.getElementById('toggleAddController');
+            var cForm = document.getElementById('addControllerForm');
+            if (cBtn && cForm){ cBtn.addEventListener('click', function(){ cForm.style.display = (cForm.style.display==='none'||!cForm.style.display)?'block':'none'; }); }
+        })();
+    </script>
+</body>
+</html>
+

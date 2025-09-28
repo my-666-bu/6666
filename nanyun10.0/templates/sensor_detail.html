@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>设备温湿度监控</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <!-- 引入SocketIO客户端 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/3.1.3/socket.io.min.js"></script>
+    <link rel="stylesheet" href="/static/style.css?v=20250915">
+</head>
+<body>
+    <!-- 顶部导航栏 -->
+    <div class="top-nav">
+        <div class="logo">物联网云平台</div>
+        <div class="nav-links">
+            <a href="/">首页</a>
+            <a href="#" class="active">设备监控</a>
+        </div>
+    </div>
+
+    <!-- 设备信息头部 -->
+    <div class="sensor-header">
+        <div class="sensor-info">
+            <h1>{{ device.name }}</h1>
+            {% if device.id.startswith('nle_') %}
+            <div class="nle-badge">[新大陆设备]</div>
+            {% endif %}
+            <p class="sensor-id">设备ID: {{ device.id }}</p>
+            {% if device.id.startswith('nle_') %}
+            <p class="sensor-id" style="color:#ff7f50;">新大陆设备ID: {{ device.nle_device_id }}</p>
+            {% endif %}
+        </div>
+        <div class="sensor-actions">
+            <button id="backBtn">返回首页</button>
+        </div>
+    </div>
+
+    <!-- 当前状态卡片 -->
+    <div class="status-cards">
+        {% if device.device_type == 'temperature' %}
+        <div class="status-card temp-card">
+            <h3>当前温度</h3>
+            <div class="status-value" id="currentTemp">{{ device.temp }}°C</div>
+            <div class="status-desc"></div>
+        </div>
+        {% elif device.device_type == 'humidity' %}
+        <div class="status-card humi-card">
+            <h3>当前湿度</h3>
+            <div class="status-value" id="currentHumi">{{ device.humi }}%</div>
+            <div class="status-desc"></div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- 温湿度曲线图表 -->
+    {% if device.device_type == 'temperature' %}
+    <div class="module-container">
+        <h2>温度变化曲线</h2>
+        <div id="tempChart" class="chart-container"></div>
+    </div>
+    {% elif device.device_type == 'humidity' %}
+    <div class="module-container">
+        <h2>湿度变化曲线</h2>
+        <div id="humiChart" class="chart-container"></div>
+    </div>
+    {% else %}
+    <div class="module-container">
+        <h2>{{ device.name }} 传感器 曲线变化图</h2>
+        <div id="genericChart" class="chart-container"></div>
+    </div>
+    {% endif %}
+
+    <script>
+        // 当前设备ID（从模板获取）
+        const deviceId = '{{ device.id }}';
+        const deviceName = '{{ device.name }}';
+        const deviceType = '{{ device.device_type }}';
+
+        // 初始化图表
+        let tempChart, humiChart, genericChart;
+        let tempOption, humiOption, genericOption;
+
+        // 初始化SocketIO连接（容錯）
+        let socket = null;
+        try {
+            if (window.io) {
+                socket = io();
+            } else {
+                console.warn('SocketIO 客戶端未加載，已跳過連接');
+            }
+        } catch (e) {
+            console.warn('SocketIO 初始化失敗，已跳過連接', e);
+        }
+
+        // 页面加载完成后初始化
+        window.addEventListener('DOMContentLoaded', () => {
+            console.log('[sensor_detail] DOMContentLoaded');
+            initCharts();
+            fetchHistoryData();
+
+            document.getElementById('backBtn').addEventListener('click', () => {
+                window.location.href = '/';
+            });
+
+            // 订阅设备数据
+            socket.emit('subscribe_device', deviceId);
+
+            // 监听实时数据推送
+            socket.on('sensor_data', handleSensorData);
+
+            // 轮询兜底：每3秒主动拉取一次历史数据，确保自动刷新
+            setInterval(fetchHistoryData, 3000);
+        });
+
+        // 初始化图表
+        function initCharts() {
+            if (deviceType === 'temperature') {
+                // 温度图表
+                tempChart = echarts.init(document.getElementById('tempChart'));
+                tempOption = {
+                    title: { text: `${deviceName} 温度变化`, left: 'center' },
+                    tooltip: { trigger: 'axis' },
+                    xAxis: { type: 'category', data: [] },
+                    yAxis: { type: 'value', name: '温度(°C)', min: 10, max: 40 },
+                    series: [{
+                        data: [],
+                        type: 'line',
+                        smooth: true,
+                        itemStyle: { color: '#ff7f50' },
+                        areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(255, 127, 80, 0.3)' }, { offset: 1, color: 'rgba(255, 127, 80, 0)' }] } }
+                    }]
+                };
+                tempChart.setOption(tempOption);
+            } else if (deviceType === 'humidity') {
+                // 湿度图表
+                humiChart = echarts.init(document.getElementById('humiChart'));
+                humiOption = {
+                    title: { text: `${deviceName} 湿度变化`, left: 'center' },
+                    tooltip: { trigger: 'axis' },
+                    xAxis: { type: 'category', data: [] },
+                    yAxis: { type: 'value', name: '湿度(%)', min: 20, max: 80 },
+                    series: [{
+                        data: [],
+                        type: 'line',
+                        smooth: true,
+                        itemStyle: { color: '#4876FF' },
+                        areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(72, 118, 255, 0.3)' }, { offset: 1, color: 'rgba(72, 118, 255, 0)' }] } }
+                    }]
+                };
+                humiChart.setOption(humiOption);
+            } else {
+                // 通用图表（单折线，以temp通道承载值）
+                genericChart = echarts.init(document.getElementById('genericChart'));
+                genericOption = {
+                    title: { text: `${deviceName} 传感器 曲线变化图`, left: 'center' },
+                    tooltip: { trigger: 'axis' },
+                    xAxis: { type: 'category', data: [] },
+                    yAxis: { type: 'value', name: '值' },
+                    series: [{
+                        data: [],
+                        type: 'line',
+                        smooth: true,
+                        itemStyle: { color: '#4caf50' },
+                        areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(76, 175, 80, 0.3)' }, { offset: 1, color: 'rgba(76, 175, 80, 0)' }] } }
+                    }]
+                };
+                genericChart.setOption(genericOption);
+            }
+
+            // 监听窗口大小变化，调整图表尺寸
+            window.addEventListener('resize', () => {
+                if (tempChart) tempChart.resize();
+                if (humiChart) humiChart.resize();
+                if (genericChart) genericChart.resize();
+            });
+        }
+
+        // 获取历史数据
+        function fetchHistoryData() {
+            fetch(`/api/devices/${deviceId}/history`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.code === 200) {
+                        updateCharts(data.data);
+                    }
+                })
+                .catch(err => console.error('获取历史数据失败:', err));
+        }
+
+        // 更新图表数据
+        function updateCharts(historyData) {
+            if (deviceType === 'temperature') {
+                // 更新温度图表
+                tempOption.xAxis.data = historyData.time;
+                tempOption.series[0].data = historyData.temp;
+                tempChart.setOption(tempOption);
+
+                // 更新当前值显示
+                document.getElementById('currentTemp').textContent =
+                    historyData.temp[historyData.temp.length - 1] + '°C';
+            } else if (deviceType === 'humidity') {
+                // 更新湿度图表
+                humiOption.xAxis.data = historyData.time;
+                humiOption.series[0].data = historyData.humi;
+                humiChart.setOption(humiOption);
+
+                // 更新当前值显示
+                document.getElementById('currentHumi').textContent =
+                    historyData.humi[historyData.humi.length - 1] + '%';
+            } else {
+                // 更新通用图表（值放在temp通道）
+                genericOption.xAxis.data = historyData.time;
+                genericOption.series[0].data = historyData.temp;
+                genericChart.setOption(genericOption);
+            }
+        }
+
+        // 处理实时推送的数据
+        function handleSensorData(data) {
+            // 只处理当前设备的数据
+            if (data.device_id !== deviceId) return;
+
+            console.log('收到实时数据:', data);
+
+            if (deviceType === 'temperature') {
+                document.getElementById('currentTemp').textContent = data.temp + '°C';
+            } else if (deviceType === 'humidity') {
+                document.getElementById('currentHumi').textContent = data.humi + '%';
+            } else {
+                // 通用不展示卡片数值，仅更新图
+            }
+
+            // 更新图表
+            updateCharts(data.history);
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>物联网设备管理平台</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/3.1.3/socket.io.min.js"></script>
+    <link rel="stylesheet" href="/static/style.css?v=20250915">
+</head>
+<body>
+    <!-- 顶部导航栏 -->
+    <div class="top-nav">
+        <div class="logo">物联网云平台</div>
+        <div class="nav-links">
+            <a href="/" class="active">首页</a>
+        </div>
+    </div>
+
+    <!-- 操作栏 -->
+    <div class="action-bar">
+        <div class="action-buttons">
+            <button id="addProjectBtn">新增项目</button>
+            <button id="addDeviceBtn">新增传感器</button>
+            <button id="addControllerBtn">新增控制器</button>
+        </div>
+        <div class="search-group">
+            <input type="text" id="searchInput" placeholder="输入设备名称或ID搜索">
+            <button id="searchBtn" onclick="searchDevices(); openSearchWindow();">搜索</button>
+            <button id="showAllBtn" style="margin-left:8px;">显示全部</button>
+        </div>
+    </div>
+
+    <!-- 搜索結果摘要 -->
+    <div id="searchSummary" style="margin: 0 20px 10px; color: #666; display:none;"></div>
+
+    <!-- 项目列表模块 -->
+    <div class="module-container">
+        <h2>项目列表</h2>
+        <div id="projectList" class="project-cards">
+            <!-- 项目卡片动态生成 -->
+        </div>
+    </div>
+
+    <!-- 温度设备列表模块（預設隱藏，搜尋時顯示） -->
+    <div class="module-container" style="display:none;" id="tempModule">
+        <h2>温度设备列表</h2>
+        <div class="filter-bar">
+            <select id="tempProjectFilter">
+                <option value="">所有项目</option>
+                <!-- 项目选项动态生成 -->
+            </select>
+        </div>
+        <div id="tempDeviceList" class="device-cards">
+            <!-- 温度设备卡片动态生成 -->
+        </div>
+    </div>
+
+    <!-- 湿度设备列表模块（預設隱藏，搜尋時顯示） -->
+    <div class="module-container" style="display:none;" id="humiModule">
+        <h2>湿度设备列表</h2>
+        <div class="filter-bar">
+            <select id="humiProjectFilter">
+                <option value="">所有项目</option>
+                <!-- 项目选项动态生成 -->
+            </select>
+        </div>
+        <div id="humiDeviceList" class="device-cards">
+            <!-- 湿度设备卡片动态生成 -->
+        </div>
+    </div>
+
+    <!-- 分组列表模块 -->
+    <div class="module-container">
+        <h2>设备分组</h2>
+        <div id="groupList" class="group-list">
+            <!-- 分组卡片动态生成 -->
+        </div>
+    </div>
+
+    <!-- 通用设备列表模块（預設隱藏，搜尋時顯示） -->
+    <div class="module-container" style="display:none;" id="genericModule">
+        <h2>通用传感器设备列表</h2>
+        <div id="genericDeviceList" class="device-cards">
+            <!-- 通用设备卡片动态生成 -->
+        </div>
+    </div>
+
+    <script>
+        // 初始化SocketIO连接（容錯）
+        let socket = null;
+        try {
+            if (window.io) {
+                socket = io();
+            } else {
+                console.warn('SocketIO 客戶端未加載，已跳過連接');
+            }
+        } catch (e) {
+            console.warn('SocketIO 初始化失敗，已跳過連接', e);
+        }
+
+        // 確保全域可用（保險）
+        window.searchDevices = searchDevices;
+        window.showAllDevices = showAllDevices;
+
+        // 页面加载完成后初始化
+        window.addEventListener('DOMContentLoaded', () => {
+            console.log('[page] DOMContentLoaded');
+            fetchProjects();
+            fetchTempDevices();
+            fetchHumiDevices();
+            fetchGroups();
+
+            // 绑定按钮事件
+            document.getElementById('addProjectBtn').addEventListener('click', addProject);
+            document.getElementById('addDeviceBtn').addEventListener('click', addDevice);
+            const addCtrlBtn = document.getElementById('addControllerBtn');
+            if (addCtrlBtn) addCtrlBtn.addEventListener('click', addController);
+            document.getElementById('searchBtn').addEventListener('click', searchDevices);
+            document.getElementById('searchInput').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') searchDevices();
+            });
+            document.getElementById('tempProjectFilter').addEventListener('change', fetchTempDevices);
+            document.getElementById('humiProjectFilter').addEventListener('change', fetchHumiDevices);
+            const showAllBtn = document.getElementById('showAllBtn');
+            if (showAllBtn) showAllBtn.addEventListener('click', showAllDevices);
+        });
+
+        // 项目相关功能
+        function fetchProjects() {
+            fetch('/api/projects')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.code === 200) {
+                        renderProjects(data.data);
+                        updateProjectFilter(data.data);
+                    }
+                })
+                .catch(err => console.error('获取项目失败:', err));
+        }
+
+        // 顯示全部設備（不帶關鍵字）
+        function showAllDevices() {
+            const summaryEl = document.getElementById('searchSummary');
+            if (summaryEl) {
+                summaryEl.style.display = 'block';
+                summaryEl.textContent = '顯示全部設備（未套用關鍵字）';
+            }
+
+            Promise.all([
+                fetch('/api/devices?device_type=temperature').then(res => res.json()),
+                fetch('/api/devices?device_type=humidity').then(res => res.json()),
+                fetch('/api/devices?device_type=generic').then(res => res.json())
+            ]).then(([t, h, g]) => {
+                const tData = (t.code===200) ? t.data : [];
+                const hData = (h.code===200) ? h.data : [];
+                const gData = (g.code===200) ? g.data : [];
+
+                renderTempDevices(tData);
+                renderHumiDevices(hData);
+                renderGenericDevices(gData);
+
+                const tempModule = document.getElementById('tempModule');
+                const humiModule = document.getElementById('humiModule');
+                const genericModule = document.getElementById('genericModule');
+                if (tempModule) tempModule.style.display = tData.length > 0 ? 'block' : 'none';
+                if (humiModule) humiModule.style.display = hData.length > 0 ? 'block' : 'none';
+                if (genericModule) genericModule.style.display = gData.length > 0 ? 'block' : 'none';
+            });
+        }
+
+        function renderProjects(projects) {
+            const container = document.getElementById('projectList');
+            container.innerHTML = '';
+
+            if (projects.length === 0) {
+                container.innerHTML = '<p class="empty-text">暂无项目，请点击"新增项目"创建</p>';
+                return;
+            }
+
+            projects.forEach(project => {
+                const card = document.createElement('div');
+                card.className = 'project-card';
+                card.innerHTML = `
+                    <div class="card-header">
+                        <h3>${project.name}</h3>
+                        <button class="delete-btn" onclick="deleteProject('${project.id}')">删除</button>
+                    </div>
+                    <p class="project-desc">${project.desc}</p>
+                    <p class="project-time">创建时间: ${project.create_time}</p>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function addProject() {
+            const name = prompt('请输入项目名称:');
+            if (!name) return;
+
+            const desc = prompt('请输入项目描述(可选):') || '';
+
+            fetch('/api/projects', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, desc })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.code === 200) {
+                    alert('项目创建成功');
+                    fetchProjects();
+                    fetchGroups();
+                } else {
+                    alert('创建失败: ' + data.msg);
+                }
+            });
+        }
+
+        function deleteProject(projectId) {
+            if (confirm('确定要删除这个项目吗? 项目下的设备和分组也会被删除!')) {
+                fetch(`/api/projects/${projectId}`, { method: 'DELETE' })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.code === 200) {
+                            alert('项目删除成功');
+                            fetchProjects();
+                            fetchTempDevices();
+                            fetchHumiDevices();
+                            fetchGroups();
+                        } else {
+                            alert('删除失败: ' + data.msg);
+                        }
+                    });
+            }
+        }
+
+        // 更新项目筛选下拉框
+        function updateProjectFilter(projects) {
+            const tempFilter = document.getElementById('tempProjectFilter');
+            const humiFilter = document.getElementById('humiProjectFilter');
+
+            // 保存当前选中值
+            const tempValue = tempFilter.value;
+            const humiValue = humiFilter.value;
+
+            // 清空选项
+            tempFilter.innerHTML = '<option value="">所有项目</option>';
+            humiFilter.innerHTML = '<option value="">所有项目</option>';
+
+            // 添加项目选项
+            projects.forEach(project => {
+                const tempOption = document.createElement('option');
+                tempOption.value = project.id;
+                tempOption.textContent = project.name;
+                tempFilter.appendChild(tempOption);
+
+                const humiOption = document.createElement('option');
+                humiOption.value = project.id;
+                humiOption.textContent = project.name;
+                humiFilter.appendChild(humiOption);
+            });
+
+            // 恢复选中值
+            if (tempValue) tempFilter.value = tempValue;
+            if (humiValue) humiFilter.value = humiValue;
+        }
+
+        // 设备相关功能
+        function fetchTempDevices() {
+            const projectId = document.getElementById('tempProjectFilter').value;
+            let url = '/api/devices?device_type=temperature';
+            if (projectId) {
+                url += `&project_id=${projectId}`;
+            }
+
+            fetch(url)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.code === 200) {
+                        renderTempDevices(data.data);
+                    }
+                })
+                .catch(err => console.error('获取温度设备失败:', err));
+        }
+
+        function fetchHumiDevices() {
+            const projectId = document.getElementById('humiProjectFilter').value;
+            let url = '/api/devices?device_type=humidity';
+            if (projectId) {
+                url += `&project_id=${projectId}`;
+            }
+
+            fetch(url)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.code === 200) {
+                        renderHumiDevices(data.data);
+                    }
+                })
+                .catch(err => console.error('获取湿度设备失败:', err));
+        }
+
+        function renderTempDevices(devices) {
+            const container = document.getElementById('tempDeviceList');
+            container.innerHTML = '';
+
+            if (devices.length === 0) {
+                container.innerHTML = '<p class="empty-text">暂无温度设备</p>';
+                return;
+            }
+
+            devices.forEach(device => {
+                const isNLE = device.id.startsWith('nle_');
+                const card = document.createElement('div');
+                card.className = 'device-card';
+                card.innerHTML = `
+                    <div class="card-header">
+                        <h3>${device.name}</h3>
+                        ${isNLE ? '<div class="nle-badge">[新大陆设备]</div>' : ''}
+                        <span class="device-id">ID: ${device.id}</span>
+                    </div>
+                    <div class="device-status">
+                        <div class="status-item">
+                            <span class="label">当前温度:</span>
+                            <span class="value temp-value">${device.temp}°C</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="label">所属项目:</span>
+                            <span class="value">${getProjectName(device.project_id)}</span>
+                        </div>
+                        ${isNLE ? `
+                        <div class="status-item">
+                            <span class="label">设备来源:</span>
+                            <span class="value" style="color:#ff7f50;">新大陆云平台</span>
+                        </div>
+                        ` : ''}
+                    </div>
+                    <div class="card-footer">
+                        <span class="click-tip">点击查看温度监控 →</span>
+                        <button class="delete-device-btn" data-id="${device.id}">删除设备</button>
+                    </div>
+                `;
+                card.addEventListener('click', (e) => {
+                    if (!e.target.classList.contains('delete-device-btn')) {
+                        window.location.href = `/sensor/${device.id}`;
+                    }
+                });
+                card.querySelector('.delete-device-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    deleteDevice(device.id);
+                });
+                container.appendChild(card);
+            });
+        }
+
+        function renderHumiDevices(devices) {
+            const container = document.getElementById('humiDeviceList');
+            container.innerHTML = '';
+
+            if (devices.length === 0) {
+                container.innerHTML = '<p class="empty-text">暂无湿度设备</p>';
+                return;
+            }
+
+            devices.forEach(device => {
+                const isNLE = device.id.startsWith('nle_');
+                const card = document.createElement('div');
+                card.className = 'device-card';
+                card.innerHTML = `
+                    <div class="card-header">
+                        <h3>${device.name}</h3>
+                        ${isNLE ? '<div class="nle-badge">[新大陆设备]</div>' : ''}
+                        <span class="device-id">ID: ${device.id}</span>
+                    </div>
+                    <div class="device-status">
+                        <div class="status-item">
+                            <span class="label">当前湿度:</span>
+                            <span class="value humi-value">${device.humi}%</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="label">所属项目:</span>
+                            <span class="value">${getProjectName(device.project_id)}</span>
+                        </div>
+                        ${isNLE ? `
+                        <div class="status-item">
+                            <span class="label">设备来源:</span>
+                            <span class="value" style="color:#ff7f50;">新大陆云平台</span>
+                        </div>
+                        ` : ''}
+                    </div>
+                    <div class="card-footer">
+                        <span class="click-tip">点击查看湿度监控 →</span>
+                        <button class="delete-device-btn" data-id="${device.id}">删除设备</button>
+                    </div>
+                `;
+                card.addEventListener('click', (e) => {
+                    if (!e.target.classList.contains('delete-device-btn')) {
+                        window.location.href = `/sensor/${device.id}`;
+                    }
+                });
+                card.querySelector('.delete-device-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    deleteDevice(device.id);
+                });
+                container.appendChild(card);
+            });
+        }
+
+        // 设备删除功能
+        function deleteDevice(deviceId) {
+            if (confirm('确定要删除这个设备吗？')) {
+                fetch(`/api/devices/${deviceId}`, { method: 'DELETE' })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.code === 200) {
+                            alert('设备删除成功');
+                            fetchTempDevices();
+                            fetchHumiDevices();
+                            fetchGroups();
+                        } else {
+                            alert('删除失败: ' + data.msg);
+                        }
+                    });
+            }
+        }
+
+        function addDevice() {
+            // 先获取所有项目
+            fetch('/api/projects')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.code !== 200 || data.data.length === 0) {
+                        alert('请先创建项目');
+                        return;
+                    }
+
+                    const deviceName = prompt('请输入设备名称:');
+                    if (!deviceName) return;
+
+                    const sensorKey = prompt('请输入该设备在云平台的传感器标识(Key):');
+                    if (!sensorKey) {
+                        alert('传感器标识不能为空');
+                        return;
+                    }
+
+                    // 生成项目选择提示
+                    let projectOptions = data.data.map((p, i) =>
+                        `${i + 1}. ${p.name}`
+                    ).join('\n');
+
+                    const projectIndex = prompt(
+                        `请选择设备所属项目（输入序号）:\n${projectOptions}`
+                    );
+
+                    if (!projectIndex || isNaN(projectIndex) ||
+                        projectIndex < 1 || projectIndex > data.data.length) {
+                        alert('请输入有效的项目序号');
+                        return;
+                    }
+
+                    const projectId = data.data[projectIndex - 1].id;
+                    // 创建设备
+                    fetch('/api/devices', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: deviceName,
+                            project_id: projectId,
+                            is_nle_device: true,
+                            nle_device_id: '',
+                            device_type: '',
+                            nle_sensor_key: sensorKey
+                        })
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.code === 200) {
+                            alert('设备添加成功');
+                            fetchTempDevices();
+                            fetchHumiDevices();
+                            fetchGroups();
+                        } else {
+                            alert('添加失败: ' + data.msg);
+                        }
+                    });
+                });
+        }
+
+        // 新增控制器（與新增傳感器相似：名稱 + 標識 + 項目；可選HTTP URL切換模式）
+        function addController() {
+            fetch('/api/projects')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.code !== 200 || data.data.length === 0) {
+                        alert('请先创建项目');
+                        return;
+                    }
+
+                    const name = prompt('请输入控制器名称:');
+                    if (!name) return;
+
+                    const controllerKey = prompt('请输入控制器标识(Key):');
+                    if (!controllerKey) { alert('控制器标识不能为空'); return; }
+
+                    // 生成项目选择提示
+                    let projectOptions = data.data.map((p, i) => `${i + 1}. ${p.name}`).join('\n');
+                    const projectIndex = prompt(`请选择所属项目（输入序号）:\n${projectOptions}`);
+                    if (!projectIndex || isNaN(projectIndex) || projectIndex < 1 || projectIndex > data.data.length) {
+                        alert('请输入有效的项目序号');
+                        return;
+                    }
+                    const projectId = data.data[projectIndex - 1].id;
+
+                    // 可選：HTTP URL（若填寫，使用HTTP模式；不填走NLE）
+                    const controlHttpUrl = prompt('可选：输入控制器HTTP控制URL(留空使用NLE控制)') || '';
+                    const mode = controlHttpUrl ? 'http' : 'nle';
+
+                    fetch('/api/controllers', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name, project_id: projectId, controller_key: controllerKey, control_http_url: controlHttpUrl, control_mode: mode })
+                    })
+                    .then(res => res.json())
+                    .then(r => {
+                        if (r.code === 200) {
+                            alert('控制器添加成功');
+                            fetchGroups();
+                        } else {
+                            alert('添加失败: ' + r.msg);
+                        }
+                    });
+                });
+        }
+
+        // 切換控制器開關
+        function toggleControl(deviceId, control, state) {
+            fetch(`/api/controllers/${deviceId}/toggle`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ control, state })
+            })
+            .then(res => res.json())
+            .then(r => {
+                if (r.code === 200) {
+                    fetchGroups();
+                } else {
+                    alert('更新失败: ' + r.msg);
+                }
+            })
+            .catch(err => {
+                console.error('切换失败', err);
+                alert('切换失败，请检查网络');
+            });
+        }
+        window.toggleControl = toggleControl;
+
+        function searchDevices() {
+            try {
+                console.log('[search] clicked');
+                const keyword = document.getElementById('searchInput').value.trim();
+                if (!keyword) {
+                    alert('请输入搜索关键词');
+                    return;
+                }
+
+                const summaryEl = document.getElementById('searchSummary');
+                if (summaryEl) {
+                    summaryEl.style.display = 'block';
+                    summaryEl.textContent = '正在搜索...';
+                }
+
+                // 同时搜索温度、湿度与通用设备
+                Promise.all([
+                    fetch(`/api/devices/search?keyword=${encodeURIComponent(keyword)}&device_type=temperature`).then(res => res.json()),
+                    fetch(`/api/devices/search?keyword=${encodeURIComponent(keyword)}&device_type=humidity`).then(res => res.json()),
+                    fetch(`/api/devices/search?keyword=${encodeURIComponent(keyword)}&device_type=generic`).then(res => res.json())
+                ])
+                .then(([tempData, humiData, genericData]) => {
+                    if (tempData.code === 200 && humiData.code === 200 && genericData.code === 200) {
+                        const allDevices = [...tempData.data, ...humiData.data, ...genericData.data];
+                        if (summaryEl) {
+                            summaryEl.style.display = 'block';
+                            summaryEl.textContent = `搜索關鍵字“${keyword}” → 溫度: ${tempData.data.length}，濕度: ${humiData.data.length}，通用: ${genericData.data.length}，合計: ${allDevices.length}`;
+                        }
+
+                        console.log('搜索結果', {
+                            temperatureCount: tempData.data.length,
+                            humidityCount: humiData.data.length,
+                            genericCount: genericData.data.length,
+                            total: allDevices.length
+                        });
+
+                        // 分别显示搜索结果
+                        renderTempDevices(tempData.data);
+                        renderHumiDevices(humiData.data);
+                        renderGenericDevices(genericData.data);
+
+                        // 顯示搜尋結果模組（原本隱藏）
+                        const tempModule = document.getElementById('tempModule');
+                        const humiModule = document.getElementById('humiModule');
+                        const genericModule = document.getElementById('genericModule');
+                        if (tempModule) tempModule.style.display = tempData.data.length > 0 ? 'block' : 'none';
+                        if (humiModule) humiModule.style.display = humiData.data.length > 0 ? 'block' : 'none';
+                        if (genericModule) genericModule.style.display = genericData.data.length > 0 ? 'block' : 'none';
+                    } else {
+                        alert('搜索接口返回異常');
+                    }
+                })
+                .catch(err => {
+                    console.error('搜索請求失敗:', err);
+                    alert('搜索請求失敗，請檢查網路或後端是否運行');
+                });
+            } catch (e) {
+                console.error('搜索發生錯誤:', e);
+                alert('搜索發生錯誤，請查看控制台日誌');
+            }
+        }
+
+        // 在新小窗口打开搜索结果页（简体中文）
+        function openSearchWindow() {
+            const keyword = document.getElementById('searchInput').value.trim();
+            const url = `/search?keyword=${encodeURIComponent(keyword)}`;
+            window.open(url, '_blank', 'width=760,height=600');
+        }
+        window.openSearchWindow = openSearchWindow;
+
+        // 通用卡片生成（傳感器/控制器均適用）
+        function buildDeviceCard(device) {
+            const isNLE = device.id && device.id.startsWith('nle_');
+            const isController = device.device_type === 'controller';
+            let valueLabel = '当前值';
+            let valueText = '';
+            if (device.device_type === 'temperature') {
+                valueLabel = '当前温度';
+                valueText = `${device.temp}°C`;
+            } else if (device.device_type === 'humidity') {
+                valueLabel = '当前湿度';
+                valueText = `${device.humi}%`;
+            } else if (isController) {
+                valueLabel = '执行器状态';
+                valueText = (device.state ? '开' : '关');
+            } else {
+                valueLabel = `当前(${device.nle_sensor_key || '值'})`;
+                valueText = `${device.temp}`;
+            }
+            const href = `/${isController ? 'controller' : 'sensor'}/${device.id}`;
+            return `
+            <div class="device-card" onclick="window.location.href='${href}'">
+                <div class="card-header">
+                    <h3>${device.name}</h3>
+                    ${isNLE ? '<div class="nle-badge">[新大陆设备]</div>' : ''}
+                    <span class="device-id">ID: ${device.id}</span>
+                </div>
+                <div class="device-status">
+                    <div class="status-item">
+                        <span class="label">${valueLabel}:</span>
+                        <span class="value ${device.device_type==='temperature'?'temp-value':(device.device_type==='humidity'?'humi-value':'')}">${valueText}</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="label">所属项目:</span>
+                        <span class="value">${getProjectName(device.project_id)}</span>
+                    </div>
+                    ${isNLE ? `
+                    <div class="status-item">
+                        <span class="label">设备来源:</span>
+                        <span class="value" style="color:#ff7f50;">新大陆云平台</span>
+                    </div>
+                    ` : ''}
+                </div>
+                <div class="card-footer">
+                    <span class="click-tip">${isController ? '点击进入控制器 →' : '点击查看实时曲线 →'}</span>
+                    <button class="delete-device-btn" data-id="${device.id}">删除设备</button>
+                </div>
+            </div>`;
+        }
+
+        // 渲染通用設備卡片（使用通用生成器）
+        function renderGenericDevices(devices) {
+            const container = document.getElementById('genericDeviceList');
+            container.innerHTML = '';
+
+            if (!devices || devices.length === 0) {
+                container.innerHTML = '<p class="empty-text">暂无通用传感器设备</p>';
+                return;
+            }
+
+            devices.forEach(device => {
+                const card = document.createElement('div');
+                card.className = 'device-card-wrapper';
+                card.innerHTML = buildDeviceCard(device);
+                // 事件委托處理刪除按鈕
+                card.addEventListener('click', (e) => {
+                    const target = e.target;
+                    if (target.classList && target.classList.contains('delete-device-btn')) {
+                        e.stopPropagation();
+                        const id = target.getAttribute('data-id');
+                        deleteDevice(id);
+                        return;
+                    }
+                });
+                container.appendChild(card);
+            });
+        }
+
+        // 分组相关功能
+        function fetchGroups() {
+            fetch('/api/groups')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.code === 200) {
+                        renderGroups(data.data);
+                    }
+                })
+                .catch(err => console.error('获取分组失败:', err));
+        }
+
+        function renderGroups(groups) {
+            const container = document.getElementById('groupList');
+            container.innerHTML = '';
+
+            if (groups.length === 0) {
+                container.innerHTML = '<p class="empty-text">暂无分组</p>';
+                return;
+            }
+
+            groups.forEach(group => {
+                // 获取分组下的设备
+                fetch(`/api/groups/${group.id}/devices`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.code === 200) {
+                            const devs = data.data;
+
+                            const deviceCards = devs.map(device => {
+                                const isNLE = device.id.startsWith('nle_');
+                                const isController = device.device_type === 'controller';
+                                let valueLabel = '当前值';
+                                let valueText = '';
+                                if (device.device_type === 'temperature') {
+                                    valueLabel = '当前温度';
+                                    valueText = `${device.temp}°C`;
+                                } else if (device.device_type === 'humidity') {
+                                    valueLabel = '当前湿度';
+                                    valueText = `${device.humi}%`;
+                                } else if (isController) {
+                                    valueLabel = '控制状态';
+                                    const fan = device.controls && device.controls.fan ? '开' : '关';
+                                    const bulb = device.controls && device.controls.bulb ? '开' : '关';
+                                    valueText = `风扇:${fan} 灯泡:${bulb}`;
+                                } else {
+                                    // 通用传感器：值存放在temp通道
+                                    valueLabel = `当前(${device.nle_sensor_key || '值'})`;
+                                    valueText = `${device.temp}`;
+                                }
+
+                                return `
+                                <div class="device-card" onclick="window.location.href='/${isController ? 'controller' : 'sensor'}/${device.id}'">
+                                    <div class="card-header">
+                                        <h3>${device.name}</h3>
+                                        ${isNLE ? '<div class="nle-badge">[新大陆设备]</div>' : ''}
+                                        <span class="device-id">ID: ${device.id}</span>
+                                    </div>
+                                    <div class="device-status">
+                                        <div class="status-item">
+                                            <span class="label">${valueLabel}:</span>
+                                            <span class="value ${device.device_type==='temperature'?'temp-value':(device.device_type==='humidity'?'humi-value':'')}">${valueText}</span>
+                                        </div>
+                                        <div class="status-item">
+                                            <span class="label">所属项目:</span>
+                                            <span class="value">${getProjectName(device.project_id)}</span>
+                                        </div>
+                                        ${isNLE ? `
+                                        <div class="status-item">
+                                            <span class="label">设备来源:</span>
+                                            <span class="value" style="color:#ff7f50;">新大陆云平台</span>
+                                        </div>
+                                        ` : ''}
+                                    </div>
+                                    <div class="card-footer">
+                                        <span class="click-tip">${isController ? '点击进入控制器 →' : '点击查看实时曲线 →'}</span>
+                                        <button class="delete-device-btn" data-id="${device.id}">删除设备</button>
+                                    </div>
+                                </div>`;
+                            }).join('');
+
+                            const card = document.createElement('div');
+                            card.className = 'group-card';
+                            card.innerHTML = `
+                                <div class="card-header">
+                                    <h3>${group.name}</h3>
+                                    <span class="project-name">${getProjectName(group.project_id)}</span>
+                                </div>
+                                <div class="group-devices" style="margin-top:10px;">
+                                    ${deviceCards || '<span class="empty-text">无设备</span>'}
+                                </div>
+                                <p class="group-time">创建时间: ${group.create_time}</p>
+                            `;
+
+                            // 绑定删除按钮事件（事件委托）
+                            card.addEventListener('click', (e) => {
+                                const target = e.target;
+                                if (target.classList.contains('delete-device-btn')) {
+                                    e.stopPropagation();
+                                    const id = target.getAttribute('data-id');
+                                    deleteDevice(id);
+                                }
+                            });
+
+                            container.appendChild(card);
+                        }
+                    });
+            });
+        }
+
+        // 辅助函数：根据ID获取项目名称
+        function getProjectName(projectId) {
+            const projects = document.querySelectorAll('#projectList .project-card');
+            for (const card of projects) {
+                if (card.querySelector('.delete-btn').getAttribute('onclick').includes(projectId)) {
+                    return card.querySelector('h3').textContent;
+                }
+            }
+            return '未知项目';
+        }
+
+        // 暴露函数到全局，供HTML中直接调用
+        window.deleteProject = deleteProject;
+    </script>
+</body>
+</html>

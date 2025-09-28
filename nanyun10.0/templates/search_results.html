@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>搜索结果</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        body { background: #f7f7f7; }
+        .search-mini { max-width: 680px; margin: 20px auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.06); padding: 16px; }
+        .search-mini h2 { margin: 0 0 12px; font-size: 20px; }
+        .result-item { border: 1px solid #eee; border-radius: 6px; padding: 12px; margin-bottom: 10px; background: #fafafa; }
+        .result-item .head { display: flex; align-items: center; justify-content: space-between; }
+        .result-item .head h3 { margin: 0; font-size: 16px; }
+        .result-item .meta { color: #666; font-size: 12px; margin-top: 6px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+        .open-btn { margin-top: 10px; padding: 6px 10px; background: #1677ff; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+        .empty { color: #999; text-align: center; padding: 20px 0; }
+        .back { margin-top: 10px; display: inline-block; color: #1677ff; text-decoration: none; }
+    </style>
+    <script>
+        function openDetail(id) {
+            window.opener ? window.opener.location.href = '/sensor/' + id : window.location.href = '/sensor/' + id;
+        }
+        function backHome() {
+            if (window.opener) {
+                window.close();
+            } else {
+                window.location.href = '/';
+            }
+        }
+    </script>
+    </head>
+<body>
+    <div class="search-mini">
+        <h2>搜索关键词："{{ keyword or '（空）' }}"</h2>
+        {% if not results %}
+            <div class="empty">未找到相关设备</div>
+        {% else %}
+            {% for d in results %}
+                <div class="result-item">
+                    <div class="head">
+                        <h3>{{ d.name }} {% if d.id.startswith('nle_') %}<span style="color:#ff7f50;font-size:12px;">[新大陆设备]</span>{% endif %}</h3>
+                        <button class="open-btn" onclick="openDetail('{{ d.id }}')">查看</button>
+                    </div>
+                    <div class="meta">
+                        <div>设备ID：{{ d.id }}</div>
+                        <div>类型：{{ d.device_type or '未知' }}</div>
+                        <!-- 传感器标识默认不显示，如需显示可取消注释 -->
+                        <!-- <div>传感器标识：{{ d.nle_sensor_key or '—' }}</div> -->
+                        <div>所属项目：{{ d.project_id }}</div>
+                        <div>创建时间：{{ d.create_time }}</div>
+                    </div>
+                </div>
+            {% endfor %}
+        {% endif %}
+        <a class="back" href="javascript:void(0)" onclick="backHome()">返回首页</a>
+    </div>
+</body>
+</html>
+
+
+
+
